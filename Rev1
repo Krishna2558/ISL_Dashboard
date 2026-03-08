@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>School Financial Dashboard</title>
+    <!-- Include Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Include Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Include Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Include SheetJS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <style>
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        input[type=range] { -webkit-appearance: none; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            background: #4f46e5; cursor: pointer; margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #e2e8f0; border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans h-screen flex overflow-hidden text-slate-800">
+
+    <!-- BASE CASE EDITOR MODAL -->
+    <div id="editorModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900 bg-opacity-60 backdrop-blur-sm p-4 hidden">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden border border-indigo-100">
+            <div class="p-4 border-b border-indigo-100 flex justify-between items-center bg-indigo-50">
+                <div>
+                    <h2 class="text-lg font-bold text-indigo-900 flex items-center">
+                        <i data-lucide="table" class="w-5 h-5 mr-2 text-indigo-600"></i> Verify & Edit Base Case Data
+                    </h2>
+                    <p class="text-xs text-indigo-600 mt-1 pl-7">Note: Only Years 1 to 8 can be manually edited. Revenue and PBT are strictly computed.</p>
+                </div>
+                <button onclick="closeEditor()" class="text-slate-400 hover:text-slate-700 transition-colors">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            
+            <div class="p-0 overflow-y-auto flex-1 bg-white">
+                <table class="w-full text-sm text-left border-collapse">
+                    <thead class="text-xs text-slate-500 uppercase bg-slate-100 sticky top-0 shadow-sm z-10">
+                        <tr>
+                            <th class="px-4 py-4 font-semibold w-24">Year</th>
+                            <th class="px-4 py-4 font-semibold text-center">Pre-School<br/>Students</th>
+                            <th class="px-4 py-4 font-semibold text-center">After-School<br/>Students</th>
+                            <th class="px-4 py-4 font-semibold text-right bg-indigo-50/30">Computed<br/>Gross Rev (₹)</th>
+                            <th class="px-4 py-4 font-semibold text-right text-red-500 bg-red-50/30">- 10% Royalty</th>
+                            <th class="px-4 py-4 font-semibold text-right text-red-500 bg-red-50/30">- Expenses (₹)</th>
+                            <th class="px-4 py-4 font-semibold text-emerald-700 bg-emerald-50/50 text-right">= PBT (₹)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="editorTableBody" class="divide-y divide-gray-100">
+                        <!-- Rows populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="p-4 border-t border-gray-100 bg-slate-50 flex justify-between items-center">
+                <p class="text-xs text-slate-500 flex-1">PBT = Gross Revenue - 10% Royalty - Total Expenses.</p>
+                <div class="flex space-x-3">
+                    <button onclick="closeEditor()" class="px-5 py-2.5 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors">
+                        Cancel
+                    </button>
+                    <button onclick="saveEditor()" class="px-5 py-2.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 flex items-center shadow-sm transition-colors">
+                        <i data-lucide="check" class="w-4 h-4 mr-2"></i> Apply Overrides
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SIDEBAR -->
+    <div class="w-80 bg-white shadow-xl flex flex-col z-10 overflow-y-auto flex-shrink-0">
+        <div class="p-5 border-b border-gray-100 bg-indigo-600 text-white sticky top-0 z-20">
+            <div class="flex items-center space-x-3">
+                <i data-lucide="school" class="h-6 w-6 text-indigo-200"></i>
+                <h1 class="text-lg font-bold">School FinModel</h1>
+            </div>
+            <p class="text-indigo-200 text-xs mt-1">Dynamic vs Base Case</p>
+        </div>
+
+        <div class="p-5 space-y-2">
+            
+            <!-- UPLOAD BOX -->
+            <div class="mb-6 p-4 bg-slate-50 border border-dashed border-slate-300 rounded-lg">
+                <h3 class="text-sm font-semibold text-slate-700 mb-2 flex items-center"><i data-lucide="upload-cloud" class="w-4 h-4 mr-2 text-indigo-500"></i> Sridhar's Base Case</h3>
+                <p class="text-[10px] text-slate-500 mb-3 leading-tight">Upload an updated Excel file to rewrite the target lines, or edit the values manually.</p>
+                
+                <input type="file" id="fileInput" accept=".xlsx, .xls, .csv" class="hidden" onchange="handleFileUpload(event)" />
+                
+                <div class="flex space-x-2">
+                    <button id="uploadBtn" onclick="document.getElementById('fileInput').click()" class="flex-1 text-xs bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium py-2 px-3 rounded shadow-sm transition-opacity">
+                        Upload File
+                    </button>
+                    <button onclick="openEditor()" class="flex-1 text-xs bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 font-medium py-2 px-3 rounded shadow-sm flex items-center justify-center">
+                        <i data-lucide="edit" class="w-3 h-3 mr-1.5"></i> Edit Manual
+                    </button>
+                </div>
+            </div>
+
+            <!-- CAPITAL STRUCTURE -->
+            <div class="mb-4 p-4 bg-indigo-50 border border-indigo-100 rounded-lg">
+                <h3 class="text-sm font-semibold text-indigo-800 mb-2 flex items-center"><i data-lucide="calculator" class="h-4 w-4 mr-2"></i> Capital Structure</h3>
+                <div class="flex justify-between text-xs mb-1"><span class="text-slate-600">Fixed CAPEX</span><span class="font-bold text-slate-800">₹20.00 Cr</span></div>
+                <div class="flex justify-between text-xs mb-1"><span class="text-slate-600">Total Shares</span><span class="font-bold text-slate-800">100</span></div>
+                <div class="flex justify-between text-xs pt-1 border-t border-indigo-200 mt-1"><span class="text-slate-600">Price per Share</span><span class="font-bold text-indigo-700">₹20.00 Lakhs</span></div>
+            </div>
+
+            <!-- INVESTOR PITCH BOX -->
+            <div class="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg shadow-sm">
+                <h3 class="text-sm font-semibold text-amber-800 mb-2 flex items-center">
+                    <svg class="h-4 w-4 mr-2 fill-amber-500 text-amber-500" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                    Investor Pitch (1 Share)
+                </h3>
+                <p class="text-[10px] text-amber-700 mb-4 leading-relaxed">
+                    49 shares available. Investors receive an <strong class="font-bold">Assured Guarantee of 6% (₹1.2L)</strong> or <strong class="font-bold">1% of PBT</strong>, whichever is higher. Capital is sunk.
+                </p>
+                <div class="mb-4">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-xs font-semibold text-amber-900">Holding Period</label>
+                        <span id="lbl_investorYear" class="text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">Year 10</span>
+                    </div>
+                    <input type="range" id="inp_investorYear" min="1" max="30" step="1" value="10" oninput="updateSliderLabel('investorYear', this.value); fetchData();" class="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600" />
+                </div>
+                <div class="space-y-3 bg-white p-3 rounded border border-amber-100">
+                    <div class="flex justify-between items-center">
+                        <span class="text-slate-500 text-xs font-medium">Yr <span id="pitch_yr">10</span> Dividend:</span>
+                        <div class="text-right leading-tight">
+                            <span id="pitch_div" class="font-bold text-emerald-600 text-sm block">₹0</span>
+                            <span id="pitch_base_div" class="text-[10px] text-slate-400">Base: ₹0</span>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center border-t border-amber-50 pt-2">
+                        <span class="text-slate-500 text-xs font-medium">Total Cash Returned:</span>
+                        <div class="text-right leading-tight">
+                            <span id="pitch_cum" class="font-bold text-emerald-600 text-sm block">₹0</span>
+                            <span id="pitch_base_cum" class="text-[10px] text-slate-400">Base: ₹0</span>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center border-t border-amber-50 pt-2">
+                        <span class="text-slate-500 text-xs font-medium">IRR (Yield) by Yr <span id="pitch_yr2">10</span>:</span>
+                        <div class="text-right leading-tight">
+                            <span id="pitch_irr" class="font-bold text-indigo-600 text-sm block">0%</span>
+                            <span id="pitch_base_irr" class="text-[10px] text-indigo-300">Base: 0%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dynamic Inputs Container -->
+            <div id="inputs-container"></div>
+            
+            <div class="pb-10"></div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="flex-1 overflow-y-auto p-8 bg-slate-50">
+        
+        <!-- KPI Row (Updated to 6-card grid for extra metrics) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+            
+            <!-- NPV -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow">
+                <div class="flex items-center space-x-3 mb-3 pb-2 border-b border-gray-50">
+                    <div class="p-1.5 rounded-full bg-emerald-100 text-emerald-600"><i data-lucide="dollar-sign" class="h-4 w-4"></i></div>
+                    <p class="text-sm font-bold text-slate-600 leading-tight">Net Present Value</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase">Project Total</p>
+                        <p id="kpi_npv" class="text-base font-bold text-slate-800">₹0</p>
+                        <p id="kpi_base_npv" class="text-[10px] text-slate-400 mt-1">Base: ₹0</p>
+                    </div>
+                    <div class="text-right border-l border-gray-100 pl-2">
+                        <p class="text-[10px] font-bold text-indigo-400 uppercase">1 Share</p>
+                        <p id="kpi_share_npv" class="text-base font-bold text-indigo-600">₹0</p>
+                        <p id="kpi_base_share_npv" class="text-[10px] text-indigo-300 mt-1">Base: ₹0</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- IRR -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow">
+                <div class="flex items-center space-x-3 mb-3 pb-2 border-b border-gray-50">
+                    <div class="p-1.5 rounded-full bg-blue-100 text-blue-600"><i data-lucide="trending-up" class="h-4 w-4"></i></div>
+                    <p class="text-sm font-bold text-slate-600 leading-tight">IRR (30-Yr)</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase">Project</p>
+                        <p id="kpi_irr" class="text-base font-bold text-slate-800">0%</p>
+                        <p id="kpi_base_irr" class="text-[10px] text-slate-400 mt-1">Base: 0%</p>
+                    </div>
+                    <div class="text-right border-l border-gray-100 pl-2">
+                        <p class="text-[10px] font-bold text-indigo-400 uppercase">1 Share</p>
+                        <p id="kpi_share_irr" class="text-base font-bold text-indigo-600">0%</p>
+                        <p id="kpi_base_share_irr" class="text-[10px] text-indigo-300 mt-1">Base: 0%</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MOIC (NEW) -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow">
+                <div class="flex items-center space-x-3 mb-3 pb-2 border-b border-gray-50">
+                    <div class="p-1.5 rounded-full bg-indigo-100 text-indigo-600"><i data-lucide="layers" class="h-4 w-4"></i></div>
+                    <p class="text-sm font-bold text-slate-600 leading-tight">MOIC (Cash Multiple)</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase">Project</p>
+                        <p id="kpi_moic" class="text-base font-bold text-slate-800">0x</p>
+                        <p id="kpi_base_moic" class="text-[10px] text-slate-400 mt-1">Base: 0x</p>
+                    </div>
+                    <div class="text-right border-l border-gray-100 pl-2">
+                        <p class="text-[10px] font-bold text-indigo-400 uppercase">1 Share</p>
+                        <p id="kpi_share_moic" class="text-base font-bold text-indigo-600">0x</p>
+                        <p id="kpi_base_share_moic" class="text-[10px] text-indigo-300 mt-1">Base: 0x</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ROI -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow">
+                <div class="flex items-center space-x-3 mb-3 pb-2 border-b border-gray-50">
+                    <div class="p-1.5 rounded-full bg-purple-100 text-purple-600"><i data-lucide="pie-chart" class="h-4 w-4"></i></div>
+                    <p class="text-sm font-bold text-slate-600 leading-tight">Total Net ROI (30-Yr)</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase">Project</p>
+                        <p id="kpi_roi" class="text-base font-bold text-slate-800">0%</p>
+                        <p id="kpi_base_roi" class="text-[10px] text-slate-400 mt-1">Base: 0%</p>
+                    </div>
+                    <div class="text-right border-l border-gray-100 pl-2">
+                        <p class="text-[10px] font-bold text-indigo-400 uppercase">1 Share</p>
+                        <p id="kpi_share_roi" class="text-base font-bold text-indigo-600">0%</p>
+                        <p id="kpi_base_share_roi" class="text-[10px] text-indigo-300 mt-1">Base: 0%</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Average Cash Yield (NEW) -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow">
+                <div class="flex items-center space-x-3 mb-3 pb-2 border-b border-gray-50">
+                    <div class="p-1.5 rounded-full bg-cyan-100 text-cyan-600"><i data-lucide="bar-chart" class="h-4 w-4"></i></div>
+                    <p class="text-sm font-bold text-slate-600 leading-tight">Avg. Annual Cash Yield</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase">Project</p>
+                        <p id="kpi_yield" class="text-base font-bold text-slate-800">0%</p>
+                        <p id="kpi_base_yield" class="text-[10px] text-slate-400 mt-1">Base: 0%</p>
+                    </div>
+                    <div class="text-right border-l border-gray-100 pl-2">
+                        <p class="text-[10px] font-bold text-indigo-400 uppercase">1 Share</p>
+                        <p id="kpi_share_yield" class="text-base font-bold text-indigo-600">0%</p>
+                        <p id="kpi_base_share_yield" class="text-[10px] text-indigo-300 mt-1">Base: 0%</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Payback -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow">
+                <div class="flex items-center space-x-3 mb-3 pb-2 border-b border-gray-50">
+                    <div class="p-1.5 rounded-full bg-amber-100 text-amber-600"><i data-lucide="activity" class="h-4 w-4"></i></div>
+                    <p class="text-sm font-bold text-slate-600 leading-tight">Payback Period</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase">Project</p>
+                        <p id="kpi_payback" class="text-base font-bold text-slate-800">Yr 0</p>
+                        <p id="kpi_base_payback" class="text-[10px] text-slate-400 mt-1">Base: Yr 0</p>
+                    </div>
+                    <div class="text-right border-l border-gray-100 pl-2">
+                        <p class="text-[10px] font-bold text-indigo-400 uppercase">1 Share</p>
+                        <p id="kpi_share_payback" class="text-base font-bold text-indigo-600">Yr 0</p>
+                        <p id="kpi_base_share_payback" class="text-[10px] text-indigo-300 mt-1">Base: Yr 0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">Financial Overview (Gross Rev vs Expenses)</h3>
+                <div class="h-80 w-full relative">
+                    <canvas id="chart1"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">Cumulative Project Cash Flow (Break-even)</h3>
+                <div class="h-80 w-full relative">
+                    <canvas id="chart2"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">Student Enrollment vs Capacity</h3>
+                <div class="h-72 w-full relative">
+                    <canvas id="chart3"></canvas>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+<script>
+    // --- FIXED PROJECT PARAMETERS ---
+    const FIXED_CAPEX = 200000000; // 20 Crores fixed Initial Investment
+    const TOTAL_SHARES = 100;
+    const PRICE_PER_SHARE = FIXED_CAPEX / TOTAL_SHARES; // 20 Lakhs
+    const MINIMUM_GUARANTEE_RATE = 0.06; // 6%
+    const MINIMUM_GUARANTEE_PAYOUT = PRICE_PER_SHARE * MINIMUM_GUARANTEE_RATE; // 1.2 Lakhs per year
+
+    // --- HELPER FUNCTIONS ---
+    function calculateIRR(cf) {
+        let sum = cf.reduce((a, b) => a + b, 0);
+        let guess = sum < 0 ? -0.1 : 0.1; 
+        for (let i = 0; i < 1000; i++) {
+            let npvGuess = 0;
+            let dNpv = 0;
+            for (let t = 0; t < cf.length; t++) {
+                npvGuess += cf[t] / Math.pow(1 + guess, t);
+                if (t > 0) dNpv -= t * cf[t] / Math.pow(1 + guess, t + 1);
+            }
+            if (Math.abs(npvGuess) < 0.0001) return guess * 100;
+            let nextGuess = guess - npvGuess / dNpv;
+            if (Math.abs(nextGuess - guess) < 0.00001) return nextGuess * 100;
+            guess = nextGuess;
+        }
+        return null;
+    }
+
+    // --- STATE & CONFIG ---
+    let chart1, chart2, chart3;
+    let baseCaseData = [];
+    
+    // Generate Initial Base Data based on Sridhar's initial points
+    for(let i=1; i<=30; i++) {
+        let progress = (i - 1) / 27; 
+        if (progress > 1) progress = 1;
+        
+        let pre = 77 + (360 - 77) * progress; 
+        let after = 19.25 + (150 - 19.25) * progress; 
+        let exp = 38500000 + (207942158 - 38500000) * progress;
+        
+        baseCaseData.push({
+            yearNum: i,
+            preStudents: Math.round(pre),
+            afterStudents: Math.round(after),
+            baseExpenses: Math.round(exp)
+        });
+    }
+
+    const inputConfig = [
+        { label: "Discount Rate (For NPV)", name: "discountRate", min: 0, max: 100, step: 0.5, symbol: "%", value: 8 },
+        { type: "divider" },
+        { type: "header", label: "Enrollment & Revenue", icon: "users" },
+        { label: "Start Pre-School Students", name: "startingPreStudents", min: 0, max: 500, step: 1, value: 77 },
+        { label: "Start After-School Students", name: "startingAfterStudents", min: 0, max: 500, step: 1, value: 19 },
+        { label: "Annual Student Growth", name: "studentGrowth", min: 0, max: 100, step: 1, symbol: "%", value: 6 },
+        { label: "Maximum Capacity", name: "maxCapacity", min: 50, max: 2000, step: 10, value: 550 },
+        { label: "Pre-School Fee (Yr 1)", name: "preSchoolFee", min: 10000, max: 1000000, step: 5000, symbol: "₹", value: 160000 },
+        { label: "After-School Fee (Yr 1)", name: "afterSchoolFee", min: 10000, max: 1000000, step: 5000, symbol: "₹", value: 60000 },
+        { label: "Annual Fee Growth", name: "feeGrowth", min: 0, max: 100, step: 0.5, symbol: "%", value: 5 },
+        { type: "divider" },
+        { type: "header", label: "Operating Expenses", icon: "activity" },
+        { label: "Fixed Annual Costs", name: "fixedCosts", min: 1000000, max: 100000000, step: 500000, symbol: "₹", value: 38000000 },
+        { label: "Variable Cost (Per Student)", name: "variableCostPerStudent", min: 5000, max: 500000, step: 1000, symbol: "₹", value: 15000 },
+        { label: "Annual Expense Growth", name: "expenseGrowth", min: 0, max: 100, step: 0.5, symbol: "%", value: 6 }
+    ];
+
+    let state = {};
+    inputConfig.forEach(c => { if(c.name) state[c.name] = c.value; });
+
+    // --- INITIALIZATION ---
+    document.addEventListener("DOMContentLoaded", () => {
+        lucide.createIcons();
+        renderInputs();
+        initCharts();
+        fetchData();
+    });
+
+    // --- FORMATTERS ---
+    const formatCurr = (val) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(val || 0);
+    const formatNum = (val) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 1 }).format(val || 0);
+    const formatMoic = (val) => val.toFixed(2) + 'x';
+    const formatIrrTxt = (val) => val === null ? 'N/A' : (val < 0 ? 'Negative' : `${formatNum(val)}%`);
+
+    // --- UI RENDERING ---
+    function renderInputs() {
+        const container = document.getElementById('inputs-container');
+        let html = '';
+
+        inputConfig.forEach(config => {
+            if (config.type === 'divider') {
+                html += `<div class="w-full h-px bg-gray-200 my-6"></div>`;
+            } else if (config.type === 'header') {
+                html += `<div class="flex items-center space-x-2 mb-4 text-indigo-700">
+                            <i data-lucide="${config.icon}" class="h-5 w-5"></i>
+                            <h2 class="font-semibold">${config.label}</h2>
+                         </div>`;
+            } else {
+                let formattedVal = Number(state[config.name]).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+                html += `
+                <div class="mb-5">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-sm font-medium text-slate-700">${config.label}</label>
+                        <div class="flex items-center space-x-1 relative">
+                            ${config.symbol === '₹' ? '<span class="text-slate-500 text-sm">₹</span>' : ''}
+                            <input type="text" id="txt_${config.name}" value="${formattedVal}" 
+                                oninput="handleTextChange('${config.name}', this.value, ${config.min}, ${config.max})" 
+                                class="w-28 text-right text-sm border border-gray-300 rounded-md shadow-sm py-1 px-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500" />
+                            ${config.symbol === '%' ? '<span class="text-slate-500 text-sm">%</span>' : ''}
+                        </div>
+                    </div>
+                    <p id="err_${config.name}" class="text-[10px] text-red-500 text-right mb-1 mt-0 leading-tight font-semibold hidden"></p>
+                    <input type="range" id="rng_${config.name}" min="${config.min}" max="${config.max}" step="${config.step}" value="${state[config.name]}" 
+                        oninput="handleSliderChange('${config.name}', this.value)" 
+                        class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                </div>`;
+            }
+        });
+        container.innerHTML = html;
+        lucide.createIcons();
+    }
+
+    function updateSliderLabel(name, val) {
+        document.getElementById(`lbl_${name}`).innerText = `Year ${val}`;
+    }
+
+    // --- INPUT HANDLERS ---
+    function handleTextChange(name, val, min, max) {
+        let rawStr = val.replace(/[^0-9.]/g, '');
+        const parts = rawStr.split('.');
+        if (parts.length > 2) rawStr = parts[0] + '.' + parts.slice(1).join('');
+        
+        let txtEl = document.getElementById(`txt_${name}`);
+        let errEl = document.getElementById(`err_${name}`);
+        let rngEl = document.getElementById(`rng_${name}`);
+
+        let finalString = rawStr === '' ? '' : (rawStr.endsWith('.') ? Number(parts[0]).toLocaleString('en-IN') + '.' : (parts.length === 2 ? Number(parts[0]).toLocaleString('en-IN') + '.' + parts[1] : Number(rawStr).toLocaleString('en-IN')));
+        
+        // Preserve cursor position roughly
+        let oldLength = txtEl.value.length;
+        let cursorStart = txtEl.selectionStart;
+        txtEl.value = finalString;
+        let diff = finalString.length - oldLength;
+        txtEl.setSelectionRange(cursorStart + diff, cursorStart + diff);
+        
+        errEl.classList.add('hidden');
+        txtEl.classList.remove('border-red-500', 'bg-red-50', 'text-red-700', 'focus:ring-red-500');
+        txtEl.classList.add('border-gray-300', 'focus:ring-indigo-500', 'focus:border-indigo-500');
+
+        if (rawStr === '') { showError(name, 'Required'); return; }
+        let parsedVal = parseFloat(rawStr);
+        if (isNaN(parsedVal)) { showError(name, 'Invalid'); return; }
+        if (parsedVal < min) { showError(name, `Min ${min.toLocaleString('en-IN')}`); return; }
+        if (parsedVal > max) { showError(name, `Max ${max.toLocaleString('en-IN')}`); return; }
+
+        state[name] = parsedVal;
+        rngEl.value = parsedVal;
+        fetchData();
+    }
+
+    function handleSliderChange(name, val) {
+        let parsedVal = parseFloat(val);
+        state[name] = parsedVal;
+        
+        let txtEl = document.getElementById(`txt_${name}`);
+        let errEl = document.getElementById(`err_${name}`);
+        
+        txtEl.value = parsedVal.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+        errEl.classList.add('hidden');
+        txtEl.classList.remove('border-red-500', 'bg-red-50', 'text-red-700', 'focus:ring-red-500');
+        txtEl.classList.add('border-gray-300', 'focus:ring-indigo-500', 'focus:border-indigo-500');
+        
+        fetchData();
+    }
+
+    function showError(name, msg) {
+        let txtEl = document.getElementById(`txt_${name}`);
+        let errEl = document.getElementById(`err_${name}`);
+        errEl.innerText = msg;
+        errEl.classList.remove('hidden');
+        txtEl.classList.remove('border-gray-300', 'focus:ring-indigo-500', 'focus:border-indigo-500');
+        txtEl.classList.add('border-red-500', 'bg-red-50', 'text-red-700', 'focus:ring-red-500');
+    }
+
+    // --- MODAL EDITOR ---
+    function openEditor() {
+        const tbody = document.getElementById('editorTableBody');
+        let html = '';
+        
+        baseCaseData.forEach((row, idx) => {
+            const isEditable = idx < 8;
+            
+            // Rigorous Math Update for transparency
+            const currentPreFee = state.preSchoolFee * Math.pow(1 + state.feeGrowth/100, idx);
+            const currentAfterFee = state.afterSchoolFee * Math.pow(1 + state.feeGrowth/100, idx);
+            const computedGrossRev = (row.preStudents * currentPreFee) + (row.afterStudents * currentAfterFee);
+            const royalty = computedGrossRev * 0.10;
+            const pbt = computedGrossRev - royalty - row.baseExpenses;
+            
+            let rowClass = isEditable ? 'hover:bg-indigo-50/30' : 'bg-slate-50/30';
+            let inputClass = isEditable ? 'border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white' : 'border-transparent bg-slate-100 text-slate-500 cursor-not-allowed';
+            let spanClass = isEditable ? 'text-slate-400' : 'text-slate-300';
+
+            html += `
+            <tr class="transition-colors ${rowClass}">
+                <td class="px-4 py-3 font-semibold text-slate-700 border-r border-gray-50 bg-slate-50/50">Year ${row.yearNum}</td>
+                <td class="px-4 py-3">
+                    <input type="number" id="ed_p_${idx}" ${!isEditable ? 'disabled' : ''} class="w-20 p-2 text-sm border rounded-md outline-none text-center transition-all ${inputClass}" value="${row.preStudents}" oninput="updateEditorRowRevenue(${idx})"/>
+                </td>
+                <td class="px-4 py-3">
+                    <input type="number" id="ed_a_${idx}" ${!isEditable ? 'disabled' : ''} class="w-20 p-2 text-sm border rounded-md outline-none text-center transition-all ${inputClass}" value="${row.afterStudents}" oninput="updateEditorRowRevenue(${idx})"/>
+                </td>
+                <td class="px-4 py-3 font-semibold text-indigo-700 bg-indigo-50/20 text-right" id="ed_gr_${idx}">
+                    ${formatCurr(computedGrossRev)}
+                </td>
+                <td class="px-4 py-3 font-semibold text-red-500 bg-red-50/20 text-right" id="ed_ro_${idx}">
+                    ${formatCurr(royalty)}
+                </td>
+                <td class="px-4 py-3">
+                    <div class="relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 ${spanClass}">₹</span>
+                        <input type="number" id="ed_e_${idx}" ${!isEditable ? 'disabled' : ''} class="w-full p-2 pl-7 text-sm border rounded-md outline-none text-right transition-all ${inputClass}" value="${row.baseExpenses}" oninput="updateEditorRowRevenue(${idx})"/>
+                    </div>
+                </td>
+                <td class="px-4 py-3 font-bold text-emerald-700 bg-emerald-50/30 text-right" id="ed_pbt_${idx}">
+                    ${formatCurr(pbt)}
+                </td>
+            </tr>`;
+        });
+        
+        tbody.innerHTML = html;
+        document.getElementById('editorModal').classList.remove('hidden');
+    }
+
+    function closeEditor() {
+        document.getElementById('editorModal').classList.add('hidden');
+    }
+
+    function updateEditorRowRevenue(idx) {
+        let p = parseFloat(document.getElementById(`ed_p_${idx}`).value) || 0;
+        let a = parseFloat(document.getElementById(`ed_a_${idx}`).value) || 0;
+        let e = parseFloat(document.getElementById(`ed_e_${idx}`).value) || 0;
+        
+        const currentPreFee = state.preSchoolFee * Math.pow(1 + state.feeGrowth/100, idx);
+        const currentAfterFee = state.afterSchoolFee * Math.pow(1 + state.feeGrowth/100, idx);
+        const computedGrossRev = (p * currentPreFee) + (a * currentAfterFee);
+        const royalty = computedGrossRev * 0.10;
+        const pbt = computedGrossRev - royalty - e;
+        
+        document.getElementById(`ed_gr_${idx}`).innerText = formatCurr(computedGrossRev);
+        document.getElementById(`ed_ro_${idx}`).innerText = formatCurr(royalty);
+        document.getElementById(`ed_pbt_${idx}`).innerText = formatCurr(pbt);
+    }
+
+    function saveEditor() {
+        for(let i=0; i<8; i++) {
+            baseCaseData[i].preStudents = parseFloat(document.getElementById(`ed_p_${i}`).value) || 0;
+            baseCaseData[i].afterStudents = parseFloat(document.getElementById(`ed_a_${i}`).value) || 0;
+            baseCaseData[i].baseExpenses = parseFloat(document.getElementById(`ed_e_${i}`).value) || 0;
+        }
+        closeEditor();
+        fetchData();
+    }
+
+    // --- FINANCIAL ENGINE ---
+    function fetchData() {
+        let inputs = state;
+        let investorYear = parseInt(document.getElementById('inp_investorYear').value);
+
+        let projectionData = [];
+        
+        // Dynamic Tracking Variables
+        let currentPre = inputs.startingPreStudents;
+        let currentAfter = inputs.startingAfterStudents;
+        let currentPreFee = inputs.preSchoolFee;
+        let currentAfterFee = inputs.afterSchoolFee;
+        let currentFixedCost = inputs.fixedCosts;
+        let currentVarCost = inputs.variableCostPerStudent;
+        
+        let cumulativeCashFlow = -FIXED_CAPEX;
+        let cashFlows = [-FIXED_CAPEX];
+        let investorCashFlows = [-PRICE_PER_SHARE];
+        let paybackYear = null;
+        let investorPaybackYear = null;
+        let totalNetProfit = 0;
+        let totalInvestorPayout = 0;
+
+        // Base Case Tracking Variables
+        let bCumulativeCashFlow = -FIXED_CAPEX;
+        let bCashFlows = [-FIXED_CAPEX];
+        let bInvestorCashFlows = [-PRICE_PER_SHARE];
+        let bPaybackYear = null;
+        let bInvestorPaybackYear = null;
+        let bTotalNetProfit = 0;
+        let bTotalInvestorPayout = 0;
+
+        for (let i = 0; i < 30; i++) {
+            let year = i + 1;
+
+            // --- 1. CALCULATE DYNAMIC CASE ---
+            let dynamicGrossRevenue = (currentPre * currentPreFee) + (currentAfter * currentAfterFee);
+            let dynamicRoyalty = dynamicGrossRevenue * 0.10; // 10% ISLAPL Royalty Deduction
+            let totalStudents = currentPre + currentAfter;
+            let totalExpenses = currentFixedCost + (totalStudents * currentVarCost);
+            
+            // PBT is Revenue - 10% Royalty - Expenses
+            let pbt = (dynamicGrossRevenue - dynamicRoyalty) - totalExpenses; 
+            
+            // Investor Math: Investors get exactly 1% of PBT per share
+            let shareProfit = pbt * (1 / TOTAL_SHARES);
+            let investorPayout = Math.max(MINIMUM_GUARANTEE_PAYOUT, shareProfit);
+
+            cumulativeCashFlow += pbt;
+            totalNetProfit += pbt;
+            cashFlows.push(pbt);
+            
+            totalInvestorPayout += investorPayout;
+            investorCashFlows.push(investorPayout);
+
+            if (cumulativeCashFlow >= 0 && paybackYear === null) paybackYear = year;
+            if (totalInvestorPayout >= PRICE_PER_SHARE && investorPaybackYear === null) investorPaybackYear = year;
+
+            // --- 2. CALCULATE BASE CASE ---
+            let bPre = baseCaseData[i]?.preStudents || 0;
+            let bAfter = baseCaseData[i]?.afterStudents || 0;
+            let bExp = baseCaseData[i]?.baseExpenses || 0;
+            
+            let bPreFee = inputs.preSchoolFee * Math.pow(1 + inputs.feeGrowth / 100, i);
+            let bAfterFee = inputs.afterSchoolFee * Math.pow(1 + inputs.feeGrowth / 100, i);
+            let bGrossRev = (bPre * bPreFee) + (bAfter * bAfterFee);
+            
+            let bRoyalty = bGrossRev * 0.10; // 10% Pass-through
+            let bPbt = (bGrossRev - bRoyalty) - bExp;
+            
+            let bShareProfit = bPbt * (1 / TOTAL_SHARES);
+            let bInvestorPayout = Math.max(MINIMUM_GUARANTEE_PAYOUT, bShareProfit);
+
+            bCumulativeCashFlow += bPbt;
+            bTotalNetProfit += bPbt;
+            bCashFlows.push(bPbt);
+            bTotalInvestorPayout += bInvestorPayout;
+            bInvestorCashFlows.push(bInvestorPayout);
+
+            if (bCumulativeCashFlow >= 0 && bPaybackYear === null) bPaybackYear = year;
+            if (bTotalInvestorPayout >= PRICE_PER_SHARE && bInvestorPaybackYear === null) bInvestorPaybackYear = year;
+
+            projectionData.push({
+                year: `Yr ${year}`,
+                yearNum: year,
+                students: Math.round(totalStudents),
+                revenue: Math.round(dynamicGrossRevenue),
+                expenses: Math.round(totalExpenses),
+                cumulative: Math.round(cumulativeCashFlow),
+                
+                baseStudents: Math.round(bPre + bAfter),
+                baseRevenue: Math.round(bGrossRev),
+                baseExpenses: Math.round(bExp),
+                baseCumulative: Math.round(bCumulativeCashFlow)
+            });
+
+            // --- GROW DYNAMIC PARAMETERS FOR NEXT YEAR ---
+            let growthFactor = 1 + inputs.studentGrowth / 100;
+            currentPre *= growthFactor;
+            currentAfter *= growthFactor;
+            
+            if (currentPre + currentAfter > inputs.maxCapacity) {
+                let ratio = inputs.maxCapacity / (currentPre + currentAfter);
+                currentPre *= ratio;
+                currentAfter *= ratio;
+            }
+            
+            currentPreFee *= (1 + inputs.feeGrowth / 100);
+            currentAfterFee *= (1 + inputs.feeGrowth / 100);
+            currentFixedCost *= (1 + inputs.expenseGrowth / 100);
+            currentVarCost *= (1 + inputs.expenseGrowth / 100);
+        }
+
+        // Discounted Cash Flow Calculations
+        let npv = 0, shareNpv = 0;
+        let bNpv = 0, bShareNpv = 0;
+        for (let t = 0; t < cashFlows.length; t++) {
+            npv += cashFlows[t] / Math.pow(1 + inputs.discountRate / 100, t);
+            shareNpv += investorCashFlows[t] / Math.pow(1 + inputs.discountRate / 100, t);
+            bNpv += bCashFlows[t] / Math.pow(1 + inputs.discountRate / 100, t);
+            bShareNpv += bInvestorCashFlows[t] / Math.pow(1 + inputs.discountRate / 100, t);
+        }
+        
+        // Investor Pitch Window Stats
+        let pitchCashFlows = investorCashFlows.slice(0, investorYear + 1);
+        let pitchCumPayout = pitchCashFlows.slice(1).reduce((a, b) => a + b, 0);
+        let pitchIrr = calculateIRR(pitchCashFlows);
+
+        let bPitchCashFlows = bInvestorCashFlows.slice(0, investorYear + 1);
+        let bPitchCumPayout = bPitchCashFlows.slice(1).reduce((a, b) => a + b, 0);
+        let bPitchIrr = calculateIRR(bPitchCashFlows);
+
+        const data = { 
+            combinedData: projectionData, 
+            dynamicKpis: { 
+                npv, shareNpv,
+                irr: calculateIRR(cashFlows), shareIrr: calculateIRR(investorCashFlows),
+                moic: totalNetProfit / FIXED_CAPEX,
+                shareMoic: totalInvestorPayout / PRICE_PER_SHARE,
+                roi: ((totalNetProfit - FIXED_CAPEX) / FIXED_CAPEX) * 100, 
+                shareRoi: ((totalInvestorPayout - PRICE_PER_SHARE) / PRICE_PER_SHARE) * 100,
+                avgYield: ((totalNetProfit / 30) / FIXED_CAPEX) * 100,
+                shareAvgYield: ((totalInvestorPayout / 30) / PRICE_PER_SHARE) * 100,
+                paybackYear: paybackYear || '30+', sharePaybackYear: investorPaybackYear || '30+'
+            },
+            baseKpis: {
+                npv: bNpv, shareNpv: bShareNpv,
+                irr: calculateIRR(bCashFlows), shareIrr: calculateIRR(bInvestorCashFlows),
+                moic: bTotalNetProfit / FIXED_CAPEX,
+                shareMoic: bTotalInvestorPayout / PRICE_PER_SHARE,
+                roi: ((bTotalNetProfit - FIXED_CAPEX) / FIXED_CAPEX) * 100, 
+                shareRoi: ((bTotalInvestorPayout - PRICE_PER_SHARE) / PRICE_PER_SHARE) * 100,
+                avgYield: ((bTotalNetProfit / 30) / FIXED_CAPEX) * 100,
+                shareAvgYield: ((bTotalInvestorPayout / 30) / PRICE_PER_SHARE) * 100,
+                paybackYear: bPaybackYear || '30+', sharePaybackYear: bInvestorPaybackYear || '30+'
+            },
+            investorPitchStats: { 
+                yearPayout: investorCashFlows[investorYear], 
+                cumulativePayout: pitchCumPayout, 
+                irr: pitchIrr,
+                baseYearPayout: bInvestorCashFlows[investorYear],
+                baseCumulativePayout: bPitchCumPayout,
+                baseIrr: bPitchIrr
+            }
+        };
+        
+        // Update DOM KPIs
+        document.getElementById('kpi_npv').innerText = formatCurr(data.dynamicKpis.npv);
+        document.getElementById('kpi_base_npv').innerText = `Base: ${formatCurr(data.baseKpis.npv)}`;
+        document.getElementById('kpi_share_npv').innerText = formatCurr(data.dynamicKpis.shareNpv);
+        document.getElementById('kpi_base_share_npv').innerText = `Base: ${formatCurr(data.baseKpis.shareNpv)}`;
+
+        document.getElementById('kpi_irr').innerText = formatIrrTxt(data.dynamicKpis.irr);
+        document.getElementById('kpi_base_irr').innerText = `Base: ${formatIrrTxt(data.baseKpis.irr)}`;
+        document.getElementById('kpi_share_irr').innerText = formatIrrTxt(data.dynamicKpis.shareIrr);
+        document.getElementById('kpi_base_share_irr').innerText = `Base: ${formatIrrTxt(data.baseKpis.shareIrr)}`;
+
+        document.getElementById('kpi_moic').innerText = formatMoic(data.dynamicKpis.moic);
+        document.getElementById('kpi_base_moic').innerText = `Base: ${formatMoic(data.baseKpis.moic)}`;
+        document.getElementById('kpi_share_moic').innerText = formatMoic(data.dynamicKpis.shareMoic);
+        document.getElementById('kpi_base_share_moic').innerText = `Base: ${formatMoic(data.baseKpis.shareMoic)}`;
+
+        document.getElementById('kpi_roi').innerText = `${formatNum(data.dynamicKpis.roi)}%`;
+        document.getElementById('kpi_base_roi').innerText = `Base: ${formatNum(data.baseKpis.roi)}%`;
+        document.getElementById('kpi_share_roi').innerText = `${formatNum(data.dynamicKpis.shareRoi)}%`;
+        document.getElementById('kpi_base_share_roi').innerText = `Base: ${formatNum(data.baseKpis.shareRoi)}%`;
+
+        document.getElementById('kpi_yield').innerText = `${formatNum(data.dynamicKpis.avgYield)}%`;
+        document.getElementById('kpi_base_yield').innerText = `Base: ${formatNum(data.baseKpis.avgYield)}%`;
+        document.getElementById('kpi_share_yield').innerText = `${formatNum(data.dynamicKpis.shareAvgYield)}%`;
+        document.getElementById('kpi_base_share_yield').innerText = `Base: ${formatNum(data.baseKpis.shareAvgYield)}%`;
+
+        document.getElementById('kpi_payback').innerText = data.dynamicKpis.paybackYear === '30+' ? '30+ Yrs' : `Yr ${data.dynamicKpis.paybackYear}`;
+        document.getElementById('kpi_base_payback').innerText = `Base: ${data.baseKpis.paybackYear === '30+' ? '30+ Yrs' : `Yr ${data.baseKpis.paybackYear}`}`;
+        document.getElementById('kpi_share_payback').innerText = data.dynamicKpis.sharePaybackYear === '30+' ? '30+ Yrs' : `Yr ${data.dynamicKpis.sharePaybackYear}`;
+        document.getElementById('kpi_base_share_payback').innerText = `Base: ${data.baseKpis.sharePaybackYear === '30+' ? '30+ Yrs' : `Yr ${data.baseKpis.sharePaybackYear}`}`;
+
+        // Update Pitch Box
+        document.getElementById('pitch_yr').innerText = investorYear;
+        document.getElementById('pitch_yr2').innerText = investorYear;
+        document.getElementById('pitch_div').innerText = formatCurr(data.investorPitchStats.yearPayout);
+        document.getElementById('pitch_base_div').innerText = `Base: ${formatCurr(data.investorPitchStats.baseYearPayout)}`;
+        document.getElementById('pitch_cum').innerText = formatCurr(data.investorPitchStats.cumulativePayout);
+        document.getElementById('pitch_base_cum').innerText = `Base: ${formatCurr(data.investorPitchStats.baseCumulativePayout)}`;
+        document.getElementById('pitch_irr').innerText = formatIrrTxt(data.investorPitchStats.irr);
+        document.getElementById('pitch_base_irr').innerText = `Base: ${formatIrrTxt(data.investorPitchStats.baseIrr)}`;
+
+        updateCharts(data.combinedData);
+    }
+
+    // --- CHART.JS INTEGRATION ---
+    function initCharts() {
+        const commonOptions = {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 6 } },
+                tooltip: {
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)', titleColor: '#1e293b', bodyColor: '#475569',
+                    borderColor: '#e2e8f0', borderWidth: 1, padding: 10, boxPadding: 4,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) label += ': ';
+                            if (context.parsed.y !== null) {
+                                if(context.chart.canvas.id === 'chart3') label += formatNum(context.parsed.y) + ' Students';
+                                else label += formatCurr(context.parsed.y);
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { display: false, drawBorder: false }, ticks: { maxTicksLimit: 10, color: '#64748b', font: {size: 11} } },
+                y: { border: { display: false }, grid: { color: '#f1f5f9', drawTicks: false }, ticks: { color: '#64748b', font: {size: 11} } }
+            }
+        };
+
+        const ctx1 = document.getElementById('chart1').getContext('2d');
+        chart1 = new Chart(ctx1, {
+            type: 'bar', data: { datasets: [] },
+            options: {
+                ...commonOptions,
+                scales: { ...commonOptions.scales, y: { ...commonOptions.scales.y, ticks: { ...commonOptions.scales.y.ticks, callback: val => '₹' + (val/10000000).toFixed(1) + 'Cr' } } }
+            }
+        });
+
+        const ctx2 = document.getElementById('chart2').getContext('2d');
+        chart2 = new Chart(ctx2, {
+            type: 'line', data: { datasets: [] },
+            options: {
+                ...commonOptions,
+                scales: { ...commonOptions.scales, y: { ...commonOptions.scales.y, ticks: { ...commonOptions.scales.y.ticks, callback: val => '₹' + (val/10000000).toFixed(1) + 'Cr' } } }
+            }
+        });
+
+        const ctx3 = document.getElementById('chart3').getContext('2d');
+        chart3 = new Chart(ctx3, {
+            type: 'line', data: { datasets: [] },
+            options: { ...commonOptions }
+        });
+    }
+
+    function updateCharts(data) {
+        const labels = data.map(d => d.year);
+        // Chart 1: Revenue vs Expenses
+        chart1.data = {
+            labels: labels,
+            datasets: [
+                { type: 'line', label: 'Base Gross Rev', data: data.map(d => d.baseRevenue), borderColor: '#818CF8', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, tension: 0.1 },
+                { type: 'line', label: 'Base Expenses', data: data.map(d => d.baseExpenses), borderColor: '#F87171', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, tension: 0.1 },
+                { type: 'bar', label: 'Dynamic Gross Rev', data: data.map(d => d.revenue), backgroundColor: 'rgba(79, 70, 229, 0.8)', borderRadius: 4 },
+                { type: 'line', label: 'Dynamic Expenses', data: data.map(d => d.expenses), borderColor: '#DC2626', borderWidth: 3, pointRadius: 0, tension: 0.1 }
+            ]
+        };
+        chart1.update();
+
+        // Chart 2: Cumulative
+        chart2.data = {
+            labels: labels,
+            datasets: [
+                { label: 'Zero Line', data: data.map(() => 0), borderColor: '#94A3B8', borderWidth: 1, borderDash: [3, 3], pointRadius: 0, fill: false },
+                { label: 'Base Case Net Cash (PBT)', data: data.map(d => d.baseCumulative), borderColor: '#34D399', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, fill: false, tension: 0.4 },
+                { label: 'Dynamic Net Cash (PBT)', data: data.map(d => d.cumulative), borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderWidth: 3, pointRadius: 0, fill: true, tension: 0.4 }
+            ]
+        };
+        chart2.update();
+
+        // Chart 3: Enrollment
+        chart3.data = {
+            labels: labels,
+            datasets: [
+                { label: 'Dynamic Max Capacity', data: data.map(() => state.maxCapacity), borderColor: '#F59E0B', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, stepped: true },
+                { label: 'Base Case Students', data: data.map(d => d.baseStudents), borderColor: '#60A5FA', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, tension: 0.4 },
+                { label: 'Dynamic Students', data: data.map(d => d.students), borderColor: '#3B82F6', backgroundColor: 'rgba(59, 130, 246, 0.15)', borderWidth: 3, pointRadius: 0, fill: true, tension: 0.4 }
+            ]
+        };
+        chart3.options.scales.y.max = state.maxCapacity * 1.2;
+        chart3.update();
+    }
+
+    // --- FILE UPLOAD PARSER ---
+    async function handleFileUpload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const btn = document.getElementById('uploadBtn');
+        btn.innerText = 'Processing...';
+        btn.disabled = true;
+
+        try {
+            const reader = new FileReader();
+            
+            reader.onload = (event) => {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    
+                    const sheetName = workbook.SheetNames.includes('Sridhars FINAL Workings') ? 'Sridhars FINAL Workings' : workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[sheetName];
+                    const csvText = XLSX.utils.sheet_to_csv(worksheet);
+                    const lines = csvText.split(/\r?\n/);
+                    
+                    let headerIdx = -1;
+                    for (let i = 0; i < Math.min(20, lines.length); i++) {
+                        const lowerLine = lines[i].toLowerCase();
+                        if ((lowerLine.includes("pre school") || lowerLine.includes("total enrolments")) && lowerLine.includes("expenses")) { 
+                            headerIdx = i; 
+                            break; 
+                        }
+                    }
+                    if (headerIdx === -1) { 
+                        alert("Could not find required columns ('Pre School', 'Expenses'). Check your Excel file."); 
+                        resetUploadBtn(btn, e); return; 
+                    }
+
+                    const headers = lines[headerIdx].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.replace(/^"|"$/g, '').trim());
+                    
+                    const colMap = {
+                        year: headers.findIndex(h => { const l = h.toLowerCase(); return l.includes('years') || l === 'year' || l.includes('year '); }),
+                        pre: headers.findIndex(h => { const l = h.toLowerCase(); return (l.includes('pre school') && !l.includes('fee')) || l === 'pre school'; }),
+                        after: headers.findIndex(h => { const l = h.toLowerCase(); return (l.includes('after school') && !l.includes('fee')) || l === 'after school'; }),
+                        expenses: headers.findIndex(h => { const l = h.toLowerCase(); return l.includes('total expenses'); })
+                    };
+
+                    let parsedData = [];
+                    for (let i = headerIdx + 1; i < lines.length; i++) {
+                        if (!lines[i].trim()) continue;
+                        const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(val => val ? val.replace(/^"|"$/g, '').trim() : '');
+                        
+                        if (row.length <= Math.max(colMap.pre, colMap.expenses)) continue;
+
+                        let yearMatch = (row[colMap.year] || "").match(/\d+/);
+                        if (!yearMatch) continue;
+                        let yearVal = parseInt(yearMatch[0]);
+                        if (yearVal > 30) continue;
+
+                        let pre = parseFloat((row[colMap.pre] || '').replace(/,/g, '')) || 0;
+                        let after = parseFloat((row[colMap.after] || '').replace(/,/g, '')) || 0;
+                        let exp = parseFloat((row[colMap.expenses] || '').replace(/,/g, '')) || 0;
+
+                        parsedData.push({
+                            yearNum: yearVal,
+                            preStudents: Math.round(pre),
+                            afterStudents: Math.round(after),
+                            baseExpenses: Math.round(exp)
+                        });
+                    }
+
+                    while (parsedData.length < 30) {
+                        let last = parsedData.length > 0 ? parsedData[parsedData.length - 1] : { yearNum: 0, preStudents:0, afterStudents:0, baseExpenses:0 };
+                        parsedData.push({ ...last, yearNum: last.yearNum + 1 });
+                    }
+
+                    baseCaseData = parsedData.slice(0, 30);
+                    alert(`Base Case successfully loaded from sheet: ${sheetName}! Review numbers using the Edit button.`);
+                    fetchData(); // Recalculate everything with new base case
+                } catch (err) {
+                    console.error(err);
+                    alert("Error parsing the Excel file. Check browser console for details.");
+                } finally {
+                    resetUploadBtn(btn, e);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        } catch (error) {
+            alert("Failed to load Excel parsing engine. Please check your internet connection.");
+            resetUploadBtn(btn, e);
+        }
+    }
+
+    function resetUploadBtn(btn, e) {
+        btn.innerText = 'Upload File';
+        btn.disabled = false;
+        e.target.value = '';
+    }
+</script>
+</body>
+</html>
